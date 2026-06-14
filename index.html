@@ -325,7 +325,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
   <div class="header">
     <div class="header-logo">NEXORA</div>
     <div class="header-actions">
-      <a href="https://t.me/nexoracapital" target="_blank"><div class="header-icon"><i class="fab fa-telegram"></i></div></a>
+      <!-- ✅ Telegram link fixed with the correct URL https://t.me/Nexora_Company1 -->
+      <a href="https://t.me/Nexora_Company1" target="_blank"><div class="header-icon"><i class="fab fa-telegram"></i></div></a>
       <span id="header-role-badge" class="role-badge">USER</span>
       <div class="header-icon" onclick="navTo('me')"><i class="fas fa-user"></i></div>
     </div>
@@ -565,7 +566,6 @@ const AUTH_ERRORS = {
 };
 
 let currentUser = null, userData = null, profitChart = null;
-// Chat listeners
 let chatUnsub = null;         // user's own chat listener
 let agentChatUnsub = null;    // agent: watches ALL user messages (triggers thread refresh)
 let refMembersUnsub = null;
@@ -890,62 +890,24 @@ async function loadReferralStats(){
 ═══════════════════════════════════════════════════ */
 function initUserChat(){
   if(!currentUser)return;
-  // Cancel any previous listener
   if(chatUnsub){ chatUnsub(); chatUnsub=null; }
-
-  // Query only by userId — no orderBy to avoid composite index requirement
-  const q = query(
-    collection(db,'supportMessages'),
-    where('userId','==',currentUser.uid)
-  );
-
+  const q = query(collection(db,'supportMessages'), where('userId','==',currentUser.uid));
   chatUnsub = onSnapshot(q, snap => {
-    // Sort client-side ascending by createdAt
-    const msgs = snap.docs
-      .map(d => d.data())
-      .sort((a,b) => {
-        const ta = a.createdAt?.seconds || 0;
-        const tb = b.createdAt?.seconds || 0;
-        return ta - tb;
-      });
+    const msgs = snap.docs.map(d=>d.data()).sort((a,b) => (a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
     renderChatMessages(msgs);
-  }, err => {
-    console.error('Chat listener error:', err);
-  });
+  }, err => { console.error('Chat listener error:', err); });
 }
 
 function renderChatMessages(msgs){
   const el=document.getElementById('chat-messages');
-  if(!msgs.length){
-    el.innerHTML='<div class="empty-state"><i class="fas fa-comments"></i><p>Send a message to support</p></div>';
-    return;
-  }
-  el.innerHTML=msgs.map(m=>{
-    const isUser=m.role==='user';
-    const time=m.createdAt?.toDate
-      ? m.createdAt.toDate().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})
-      : '';
-    const nameLabel=isUser?'':'<div class="agent-name-label">🤖 AGENT-24/7</div>';
-    return `<div class="chat-bubble ${isUser?'user':'agent'}">${nameLabel}<div class="bubble-inner">${sanitize(m.message)}</div><div class="bubble-time">${time}</div></div>`;
-  }).join('');
+  if(!msgs.length){ el.innerHTML='<div class="empty-state"><i class="fas fa-comments"></i><p>Send a message to support</p></div>'; return; }
+  el.innerHTML=msgs.map(m=>{ const isUser=m.role==='user'; const time=m.createdAt?.toDate?m.createdAt.toDate().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):''; const nameLabel=isUser?'':'<div class="agent-name-label">🤖 AGENT-24/7</div>'; return `<div class="chat-bubble ${isUser?'user':'agent'}">${nameLabel}<div class="bubble-inner">${sanitize(m.message)}</div><div class="bubble-time">${time}</div></div>`; }).join('');
   el.scrollTop=el.scrollHeight;
 }
 
 window.sendChatMsg=async function(){
-  if(!currentUser)return;
-  const inp=document.getElementById('chat-input');
-  const msg=inp.value.trim();
-  if(!msg)return;
-  inp.value='';
-  await safeOp(()=>addDoc(collection(db,'supportMessages'),{
-    userId:currentUser.uid,
-    userName:userData?.fullname||'User',
-    userEmail:currentUser.email,
-    message:sanitize(msg),
-    role:'user',
-    isRead:false,
-    createdAt:serverTimestamp()
-  }));
+  if(!currentUser)return; const inp=document.getElementById('chat-input'); const msg=inp.value.trim(); if(!msg)return; inp.value='';
+  await safeOp(()=>addDoc(collection(db,'supportMessages'),{ userId:currentUser.uid, userName:userData?.fullname||'User', userEmail:currentUser.email, message:sanitize(msg), role:'user', isRead:false, createdAt:serverTimestamp() }));
 };
 
 /* ═══════════════════════════════════════════════════
@@ -957,352 +919,91 @@ window.sendChatMsg=async function(){
 function initAgentChatListener(){
   if(!currentUser||userData?.role!=='agent')return;
   if(agentChatUnsub){ agentChatUnsub(); agentChatUnsub=null; }
-
-  // Watch ALL support messages — no orderBy to avoid index issues
   const q = query(collection(db,'supportMessages'));
-
-  agentChatUnsub = onSnapshot(q, () => {
-    // Rebuild thread list whenever ANY message changes
-    // Only rebuild if the support-chat section is visible
-    const sc = document.getElementById('agent-support-chat');
-    if(sc && sc.classList.contains('active')){
-      loadAgentChatThreads();
-    }
-  }, err => {
-    console.error('Agent chat listener error:', err);
-  });
+  agentChatUnsub = onSnapshot(q, () => { const sc = document.getElementById('agent-support-chat'); if(sc && sc.classList.contains('active')){ loadAgentChatThreads(); } }, err => { console.error('Agent chat listener error:', err); });
 }
 
 async function loadAgentChatThreads(){
   const container=document.getElementById('agent-chat-threads');
   if(!container)return;
-
-  // Get all messages, sort client-side
   const q = query(collection(db,'supportMessages'));
   const snap = await getDocs(q);
-
-  if(snap.empty){
-    container.innerHTML='<div class="empty-state"><i class="fas fa-comments"></i><p>No user messages yet.</p></div>';
-    return;
-  }
-
-  // Build unique user map — keep latest message per user for display
+  if(snap.empty){ container.innerHTML='<div class="empty-state"><i class="fas fa-comments"></i><p>No user messages yet.</p></div>'; return; }
   const usersMap={};
-  snap.docs.forEach(d=>{
-    const data=d.data();
-    // Only track actual users (not agent's own replies as thread starters)
-    if(data.role==='user'){
-      if(!usersMap[data.userId]){
-        usersMap[data.userId]=data;
-      }
-    }
-  });
-
-  // Also include threads where agent replied but we might not have user msg yet
-  snap.docs.forEach(d=>{
-    const data=d.data();
-    if(data.role==='agent'&&data.userId&&!usersMap[data.userId]){
-      // include with placeholder user info
-      usersMap[data.userId]={userId:data.userId,userName:'User',userEmail:'',role:'user'};
-    }
-  });
-
+  snap.docs.forEach(d=>{ const data=d.data(); if(data.role==='user'){ if(!usersMap[data.userId]) usersMap[data.userId]=data; } });
+  snap.docs.forEach(d=>{ const data=d.data(); if(data.role==='agent'&&data.userId&&!usersMap[data.userId]){ usersMap[data.userId]={userId:data.userId,userName:'User',userEmail:'',role:'user'}; } });
   const uids=Object.keys(usersMap);
-  if(!uids.length){
-    container.innerHTML='<div class="empty-state"><i class="fas fa-comments"></i><p>No user messages yet.</p></div>';
-    return;
-  }
-
-  // Render thread shells (don't destroy existing ones to preserve input state)
-  // Only add new threads, update existing
-  const existingThreadIds = new Set(
-    Array.from(container.querySelectorAll('.agent-chat-thread')).map(el=>el.id.replace('thread-',''))
-  );
-
+  if(!uids.length){ container.innerHTML='<div class="empty-state"><i class="fas fa-comments"></i><p>No user messages yet.</p></div>'; return; }
+  const existingThreadIds = new Set(Array.from(container.querySelectorAll('.agent-chat-thread')).map(el=>el.id.replace('thread-','')));
   uids.forEach(uid=>{
     if(!existingThreadIds.has(uid)){
-      const info=usersMap[uid];
-      const masked=maskEmail(info.userEmail||'');
-      const threadEl=document.createElement('div');
-      threadEl.className='agent-chat-thread';
-      threadEl.id=`thread-${uid}`;
-      threadEl.innerHTML=`
-        <div class="agent-chat-thread-header">
-          <div class="agent-chat-thread-user">${sanitize(info.userName||'User')}</div>
-          <div class="agent-chat-thread-email">${masked}</div>
-        </div>
-        <div class="agent-chat-thread-messages" id="thread-msgs-${uid}">
-          <div style="text-align:center;color:var(--text3);font-size:12px">Loading messages...</div>
-        </div>
-        <div class="agent-chat-reply-row">
-          <input type="text" id="agent-reply-input-${uid}" placeholder="Reply to ${sanitize(info.userName||'user')}..." onkeydown="if(event.key==='Enter')agentSendReply('${uid}')">
-          <button class="agent-reply-btn" onclick="agentSendReply('${uid}')">Reply</button>
-        </div>`;
-      // Remove empty state if present
-      const emptyState=container.querySelector('.empty-state');
-      if(emptyState)emptyState.remove();
-      container.appendChild(threadEl);
+      const info=usersMap[uid]; const masked=maskEmail(info.userEmail||'');
+      const threadEl=document.createElement('div'); threadEl.className='agent-chat-thread'; threadEl.id=`thread-${uid}`;
+      threadEl.innerHTML=`<div class="agent-chat-thread-header"><div class="agent-chat-thread-user">${sanitize(info.userName||'User')}</div><div class="agent-chat-thread-email">${masked}</div></div><div class="agent-chat-thread-messages" id="thread-msgs-${uid}"><div style="text-align:center;color:var(--text3);font-size:12px">Loading messages...</div></div><div class="agent-chat-reply-row"><input type="text" id="agent-reply-input-${uid}" placeholder="Reply to ${sanitize(info.userName||'user')}..." onkeydown="if(event.key==='Enter')agentSendReply('${uid}')"><button class="agent-reply-btn" onclick="agentSendReply('${uid}')">Reply</button></div>`;
+      const emptyState=container.querySelector('.empty-state'); if(emptyState)emptyState.remove(); container.appendChild(threadEl);
     }
   });
-
-  // Set up or refresh per-thread real-time listeners
   uids.forEach(uid=>{
-    // Only set up listener if not already running
     if(agentThreadUnsubs[uid])return;
-
-    const tq=query(
-      collection(db,'supportMessages'),
-      where('userId','==',uid)
-    );
+    const tq=query(collection(db,'supportMessages'), where('userId','==',uid));
     agentThreadUnsubs[uid]=onSnapshot(tq, snap=>{
-      const el=document.getElementById(`thread-msgs-${uid}`);
-      if(!el)return;
-
-      // Sort messages client-side
-      const msgs=snap.docs
-        .map(d=>d.data())
-        .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
-
-      if(!msgs.length){
-        el.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center">No messages yet</div>';
-        return;
-      }
-      el.innerHTML=msgs.map(m=>{
-        const fromUser=m.role==='user';
-        const time=m.createdAt?.toDate
-          ? m.createdAt.toDate().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})
-          : '';
-        return `<div>
-          <div class="agent-bubble ${fromUser?'from-user':'from-agent'}">${sanitize(m.message)}</div>
-          <div class="agent-bubble-time" style="text-align:${fromUser?'left':'right'}">
-            ${fromUser?sanitize(m.userName||'User')+' · ':'🤖 AGENT-24/7 · '}${time}
-          </div>
-        </div>`;
-      }).join('');
+      const el=document.getElementById(`thread-msgs-${uid}`); if(!el)return;
+      const msgs=snap.docs.map(d=>d.data()).sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
+      if(!msgs.length){ el.innerHTML='<div style="color:var(--text3);font-size:12px;text-align:center">No messages yet</div>'; return; }
+      el.innerHTML=msgs.map(m=>{ const fromUser=m.role==='user'; const time=m.createdAt?.toDate?m.createdAt.toDate().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):''; return `<div><div class="agent-bubble ${fromUser?'from-user':'from-agent'}">${sanitize(m.message)}</div><div class="agent-bubble-time" style="text-align:${fromUser?'left':'right'}">${fromUser?sanitize(m.userName||'User')+' · ':'🤖 AGENT-24/7 · '}${time}</div></div>`; }).join('');
       el.scrollTop=el.scrollHeight;
-    }, err=>{
-      console.error('Thread listener error for',uid,err);
-    });
+    }, err=>{ console.error('Thread listener error for',uid,err); });
   });
 }
 
 window.agentSendReply=async function(userId){
-  const inp=document.getElementById(`agent-reply-input-${userId}`);
-  if(!inp)return;
-  const msg=inp.value.trim();
-  if(!msg)return;
-  inp.value='';
-  await safeOp(()=>addDoc(collection(db,'supportMessages'),{
-    userId,
-    userName:'🤖 AGENT-24/7',
-    userEmail:currentUser.email,
-    message:sanitize(msg),
-    role:'agent',
-    isRead:true,
-    createdAt:serverTimestamp()
-  }));
+  const inp=document.getElementById(`agent-reply-input-${userId}`); if(!inp)return; const msg=inp.value.trim(); if(!msg)return; inp.value='';
+  await safeOp(()=>addDoc(collection(db,'supportMessages'),{ userId, userName:'🤖 AGENT-24/7', userEmail:currentUser.email, message:sanitize(msg), role:'agent', isRead:true, createdAt:serverTimestamp() }));
 };
 
 /* ── DEPOSIT ── */
 const DEPOSIT_ADDRESSES={TRC20:'TX8xL9QpVkY7m3n2b8cA1dEfG5hJkL9oP',SOL:'SolanaAddressNexora9xQpVkY7m3n2b8c',ERC20:'0xEf9d8C7aB5e2F1d9XyZ3wQrT6pLkMnBvCx',BTC:'bc1qxy2kg9z7x6lq5v4u3w2r1t0y8i7u6',BEP20:'bnb1xqy9l8k7j6h5g4f3d2s1a0p9o8i7u6'};
 let currentDepMethod={method:'TRC20',qr:'https://i.postimg.cc/VNBFsVhR/trc20.jpg'};
-window.selectDepositMethod=function(btn,method,qr){
-  document.querySelectorAll('.method-chip').forEach(c=>c.classList.remove('active'));
-  btn.classList.add('active');currentDepMethod={method,qr};
-  document.getElementById('dep-qr-img').src=qr;
-};
+window.selectDepositMethod=function(btn,method,qr){ document.querySelectorAll('.method-chip').forEach(c=>c.classList.remove('active')); btn.classList.add('active');currentDepMethod={method,qr}; document.getElementById('dep-qr-img').src=qr; };
 window.submitDeposit=async function(){
   if(!currentUser)return showToast('Please login first','error');
-  const wallet=sanitize(document.getElementById('dep-user-wallet').value);
-  const txnHash=sanitize(document.getElementById('dep-txn-hash').value);
-  const amount=parseFloat(document.getElementById('dep-amount').value);
-  const file=document.getElementById('dep-screenshot').files[0];
-  if(!wallet)return showToast('Enter your wallet address.','error');
-  if(!txnHash)return showToast('Enter the transaction hash.','error');
-  if(!amount||amount<50)return showToast('Minimum deposit is $50.','error');
-  if(!file)return showToast('Please upload a payment screenshot.','error');
-  const btn=document.getElementById('dep-submit-btn');setLoading(btn,true);
-  await safeOp(async()=>{
-    const dupQ=query(collection(db,'deposits'),where('txnHash','==',txnHash));
-    const dupSnap=await getDocs(dupQ);if(!dupSnap.empty)throw new Error('This Transaction Hash is already used!');
-    let screenshot='';
-    try{screenshot=await fileToBase64(file);}catch(e){throw new Error('Screenshot too large. Max 800KB.');}
-    await addDoc(collection(db,'deposits'),{userId:currentUser.uid,userName:sanitize(userData?.fullname||''),userEmail:currentUser.email,method:currentDepMethod.method,depositAddress:DEPOSIT_ADDRESSES[currentDepMethod.method]||'',userWallet:wallet,txnHash,amount,screenshot,status:'pending',createdAt:serverTimestamp()});
-    closeModal('deposit-modal');
-    document.getElementById('dep-user-wallet').value='';document.getElementById('dep-txn-hash').value='';document.getElementById('dep-amount').value='';document.getElementById('dep-screenshot').value='';document.getElementById('dep-preview').style.display='none';
-    showToast('Deposit submitted! Pending approval.','success',5000);
-  });
-  setLoading(btn,false,'Submit Deposit Request');
+  const wallet=sanitize(document.getElementById('dep-user-wallet').value); const txnHash=sanitize(document.getElementById('dep-txn-hash').value); const amount=parseFloat(document.getElementById('dep-amount').value); const file=document.getElementById('dep-screenshot').files[0];
+  if(!wallet)return showToast('Enter your wallet address.','error'); if(!txnHash)return showToast('Enter the transaction hash.','error'); if(!amount||amount<50)return showToast('Minimum deposit is $50.','error'); if(!file)return showToast('Please upload a payment screenshot.','error');
+  const btn=document.getElementById('dep-submit-btn'); setLoading(btn,true);
+  await safeOp(async()=>{ const dupQ=query(collection(db,'deposits'),where('txnHash','==',txnHash)); const dupSnap=await getDocs(dupQ); if(!dupSnap.empty)throw new Error('This Transaction Hash is already used!'); let screenshot=''; try{screenshot=await fileToBase64(file);}catch(e){throw new Error('Screenshot too large. Max 800KB.');} await addDoc(collection(db,'deposits'),{userId:currentUser.uid,userName:sanitize(userData?.fullname||''),userEmail:currentUser.email,method:currentDepMethod.method,depositAddress:DEPOSIT_ADDRESSES[currentDepMethod.method]||'',userWallet:wallet,txnHash,amount,screenshot,status:'pending',createdAt:serverTimestamp()}); closeModal('deposit-modal'); document.getElementById('dep-user-wallet').value='';document.getElementById('dep-txn-hash').value='';document.getElementById('dep-amount').value='';document.getElementById('dep-screenshot').value='';document.getElementById('dep-preview').style.display='none'; showToast('Deposit submitted! Pending approval.','success',5000); }); setLoading(btn,false,'Submit Deposit Request');
 };
 
 /* ── WITHDRAWAL ── */
 window.submitWithdrawal=async function(){
-  if(!currentUser)return showToast('Please login first','error');
-  const method=document.getElementById('with-method').value;
-  const address=sanitize(document.getElementById('with-address').value);
-  const amount=parseFloat(document.getElementById('with-amount').value);
-  const file=document.getElementById('with-qr').files[0];
-  if(!address)return showToast('Enter your withdrawal address.','error');
-  if(!amount||amount<20)return showToast('Minimum withdrawal is $20.','error');
-  const balance=userData?.balance||0;
-  if(amount>balance)return showToast(`Insufficient balance ($${balance.toFixed(2)}).`,'error');
-  const btn=document.getElementById('with-submit-btn');setLoading(btn,true);
-  await safeOp(async()=>{
-    let qrCode='';
-    if(file){const err=validateImage(file);if(err)throw new Error(err);try{qrCode=await fileToBase64(file,1000000);}catch(e){throw new Error('QR image too large.');}}
-    await addDoc(collection(db,'withdrawals'),{userId:currentUser.uid,userName:sanitize(userData?.fullname||''),userEmail:currentUser.email,method,address,amount,qrCode,status:'pending',createdAt:serverTimestamp()});
-    closeModal('withdraw-modal');
-    document.getElementById('with-address').value='';document.getElementById('with-amount').value='';document.getElementById('with-qr').value='';document.getElementById('with-preview').style.display='none';
-    showToast('Withdrawal requested! Pending approval.','success',5000);
-  });
-  setLoading(btn,false,'Request Withdrawal');
+  if(!currentUser)return showToast('Please login first','error'); const method=document.getElementById('with-method').value; const address=sanitize(document.getElementById('with-address').value); const amount=parseFloat(document.getElementById('with-amount').value); const file=document.getElementById('with-qr').files[0]; if(!address)return showToast('Enter your withdrawal address.','error'); if(!amount||amount<20)return showToast('Minimum withdrawal is $20.','error'); const balance=userData?.balance||0; if(amount>balance)return showToast(`Insufficient balance ($${balance.toFixed(2)}).`,'error'); const btn=document.getElementById('with-submit-btn');setLoading(btn,true); await safeOp(async()=>{ let qrCode=''; if(file){const err=validateImage(file);if(err)throw new Error(err);try{qrCode=await fileToBase64(file,1000000);}catch(e){throw new Error('QR image too large.');}} await addDoc(collection(db,'withdrawals'),{userId:currentUser.uid,userName:sanitize(userData?.fullname||''),userEmail:currentUser.email,method,address,amount,qrCode,status:'pending',createdAt:serverTimestamp()}); closeModal('withdraw-modal'); document.getElementById('with-address').value='';document.getElementById('with-amount').value='';document.getElementById('with-qr').value='';document.getElementById('with-preview').style.display='none'; showToast('Withdrawal requested! Pending approval.','success',5000); }); setLoading(btn,false,'Request Withdrawal');
 };
 
 /* ── KYC ── */
 window.submitKYC=async function(){
-  if(!currentUser)return showToast('Please login first','error');
-  const name=sanitize(document.getElementById('kyc-name').value);const dob=document.getElementById('kyc-dob').value;
-  const ff=document.getElementById('kyc-front').files[0];const bf=document.getElementById('kyc-back').files[0];
-  if(!name||!dob||!ff||!bf)return showToast('Please fill all KYC fields.','error');
-  const btn=document.getElementById('kyc-submit-btn');setLoading(btn,true);
-  await safeOp(async()=>{
-    const [fi,bi]=await Promise.all([fileToBase64(ff),fileToBase64(bf)]).catch(()=>{throw new Error('ID images must be under 800KB each.');});
-    await addDoc(collection(db,'kycRequests'),{userId:currentUser.uid,userEmail:currentUser.email,userName:sanitize(userData?.fullname||''),fullname:name,dob,frontImage:fi,backImage:bi,status:'pending',createdAt:serverTimestamp()});
-    await updateDoc(doc(db,'users',currentUser.uid),{kycStatus:'pending'});
-    userData.kycStatus='pending';updateUIFromUserData();closeModal('kyc-modal');showToast('KYC submitted! Pending review.','success',5000);
-  });
-  setLoading(btn,false,'Submit KYC');
+  if(!currentUser)return showToast('Please login first','error'); const name=sanitize(document.getElementById('kyc-name').value); const dob=document.getElementById('kyc-dob').value; const ff=document.getElementById('kyc-front').files[0]; const bf=document.getElementById('kyc-back').files[0]; if(!name||!dob||!ff||!bf)return showToast('Please fill all KYC fields.','error'); const btn=document.getElementById('kyc-submit-btn'); setLoading(btn,true); await safeOp(async()=>{ const [fi,bi]=await Promise.all([fileToBase64(ff),fileToBase64(bf)]).catch(()=>{throw new Error('ID images must be under 800KB each.');}); await addDoc(collection(db,'kycRequests'),{userId:currentUser.uid,userEmail:currentUser.email,userName:sanitize(userData?.fullname||''),fullname:name,dob,frontImage:fi,backImage:bi,status:'pending',createdAt:serverTimestamp()}); await updateDoc(doc(db,'users',currentUser.uid),{kycStatus:'pending'}); userData.kycStatus='pending';updateUIFromUserData();closeModal('kyc-modal');showToast('KYC submitted! Pending review.','success',5000); }); setLoading(btn,false,'Submit KYC');
 };
 
 /* ── TX HISTORY ── */
-window.showTxHistory=async function(){
-  if(!currentUser)return;navTo('history');
-  const container=document.getElementById('tx-list');container.innerHTML='<div class="empty-state"><div class="spinner"></div></div>';
-  const [depSnap,withSnap]=await Promise.all([safeOp(()=>getDocs(query(collection(db,'deposits'),where('userId','==',currentUser.uid)))),safeOp(()=>getDocs(query(collection(db,'withdrawals'),where('userId','==',currentUser.uid))))]);
-  const items=[];
-  depSnap?.forEach(d=>items.push({...d.data(),type:'Deposit'}));
-  withSnap?.forEach(d=>items.push({...d.data(),type:'Withdrawal'}));
-  items.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
-  if(!items.length){container.innerHTML='<div class="empty-state"><i class="fas fa-receipt"></i><p>No transactions yet.</p></div>';return;}
-  container.innerHTML=items.map(t=>`<div class="tx-item"><div class="tx-left"><div class="tx-method">${t.type} · ${t.method}</div><div class="tx-date">${t.createdAt?.toDate?t.createdAt.toDate().toLocaleDateString():'—'}</div></div><div class="tx-right"><div class="tx-amount" style="color:${t.type==='Deposit'?'var(--green)':'var(--red)'}">$${(t.amount||0).toFixed(2)}</div><span class="tx-status ${t.status}">${t.status}</span></div></div>`).join('');
+window.showTxHistory=async function(){ if(!currentUser)return; navTo('history'); const container=document.getElementById('tx-list'); container.innerHTML='<div class="empty-state"><div class="spinner"></div></div>'; const [depSnap,withSnap]=await Promise.all([safeOp(()=>getDocs(query(collection(db,'deposits'),where('userId','==',currentUser.uid)))),safeOp(()=>getDocs(query(collection(db,'withdrawals'),where('userId','==',currentUser.uid))))]); const items=[]; depSnap?.forEach(d=>items.push({...d.data(),type:'Deposit'})); withSnap?.forEach(d=>items.push({...d.data(),type:'Withdrawal'})); items.sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)); if(!items.length){container.innerHTML='<div class="empty-state"><i class="fas fa-receipt"></i><p>No transactions yet.</p></div>';return;} container.innerHTML=items.map(t=>`<div class="tx-item"><div class="tx-left"><div class="tx-method">${t.type} · ${t.method}</div><div class="tx-date">${t.createdAt?.toDate?t.createdAt.toDate().toLocaleDateString():'—'}</div></div><div class="tx-right"><div class="tx-amount" style="color:${t.type==='Deposit'?'var(--green)':'var(--red)'}">$${(t.amount||0).toFixed(2)}</div><span class="tx-status ${t.status}">${t.status}</span></div></div>`).join('');
 };
 
 /* ── AGENT PANEL ── */
-async function loadAgentData(){
-  if(!userData||userData.role!=='agent')return;
-  const [depSnap,withSnap,userSnap,kycSnap]=await Promise.all([
-    safeOp(()=>getDocs(query(collection(db,'deposits'),where('status','==','pending')))),
-    safeOp(()=>getDocs(query(collection(db,'withdrawals'),where('status','==','pending')))),
-    safeOp(()=>getDocs(collection(db,'users'))),
-    safeOp(()=>getDocs(query(collection(db,'kycRequests'),where('status','==','pending'))))
-  ]);
-  document.getElementById('ag-pending-dep').textContent=depSnap?.size||0;
-  document.getElementById('ag-pending-with').textContent=withSnap?.size||0;
-  document.getElementById('ag-total-users').textContent=userSnap?.size||0;
-  document.getElementById('ag-pending-kyc').textContent=kycSnap?.size||0;
-  renderAgentDeposits(depSnap?.docs||[]);
-  renderAgentWithdrawals(withSnap?.docs||[]);
-  renderAgentKYC(kycSnap?.docs||[]);
-  // Start the real-time agent chat listener
-  initAgentChatListener();
-}
-
-function renderAgentDeposits(docs){
-  const el=document.getElementById('agent-deposits');
-  if(!docs.length){el.innerHTML='<div class="empty-state"><i class="fas fa-inbox"></i><p>No pending deposits.</p></div>';return;}
-  el.innerHTML=docs.map(d=>{const dep=d.data();return`<div class="agent-card"><div class="ac-email">${dep.userEmail} · ${dep.method}</div><div class="ac-amount">$${(dep.amount||0).toFixed(2)}</div><div style="font-size:11px;color:var(--text3);margin-bottom:6px">Wallet: ${dep.userWallet||'—'}</div><div style="font-size:11px;color:var(--text3);margin-bottom:10px">TxID: ${dep.txnHash?.substring(0,20)}...</div>${dep.screenshot?`<img src="data:image/jpeg;base64,${dep.screenshot}" style="width:100%;border-radius:10px;margin-bottom:10px;max-height:120px;object-fit:cover">`:''}><div class="agent-actions"><button class="agent-btn approve" onclick="agentApproveDeposit('${d.id}','${dep.userId}',${dep.amount})">✅ Approve</button><button class="agent-btn reject" onclick="agentRejectDeposit('${d.id}')">❌ Reject</button></div></div>`;}).join('');
-}
-
-function renderAgentWithdrawals(docs){
-  const el=document.getElementById('agent-withdrawals');
-  if(!docs.length){el.innerHTML='<div class="empty-state"><i class="fas fa-inbox"></i><p>No pending withdrawals.</p></div>';return;}
-  el.innerHTML=docs.map(d=>{
-    const w=d.data();
-    const qrHtml=w.qrCode?`<img src="data:image/jpeg;base64,${w.qrCode}" class="agent-qr-img" title="Tap to expand" onclick="this.style.maxHeight=this.style.maxHeight==='none'?'120px':'none'">`:'<div style="font-size:11px;color:var(--text3);margin-bottom:8px;">No QR code uploaded</div>';
-    return`<div class="agent-card"><div class="ac-email">${w.userEmail} · ${w.method}</div><div class="ac-amount">$${(w.amount||0).toFixed(2)}</div><div style="font-size:11px;color:var(--text3);margin-bottom:8px">To: ${w.address?.substring(0,28)}...</div>${qrHtml}<div class="agent-actions"><button class="agent-btn approve" onclick="agentApproveWithdrawal('${d.id}','${w.userId}',${w.amount})">✅ Approve</button><button class="agent-btn reject" onclick="agentRejectWithdrawal('${d.id}')">❌ Reject</button></div></div>`;
-  }).join('');
-}
-
-function renderAgentKYC(docs){
-  const el=document.getElementById('agent-kyc');
-  if(!docs.length){el.innerHTML='<div class="empty-state"><i class="fas fa-id-card"></i><p>No pending KYC requests.</p></div>';return;}
-  el.innerHTML=docs.map(d=>{const k=d.data();return`<div class="agent-card"><div class="ac-email">${k.userEmail}</div><div style="font-size:14px;font-weight:600;margin-bottom:10px">${k.fullname} · DOB: ${k.dob}</div><div class="agent-actions"><button class="agent-btn view" onclick="viewKYC('${d.id}')">👁 View</button><button class="agent-btn approve" onclick="agentApproveKYC('${d.id}','${k.userId}')">✅ Approve</button><button class="agent-btn reject" onclick="agentRejectKYC('${d.id}','${k.userId}')">❌ Reject</button></div></div>`;}).join('');
-}
-
-window.agentApproveDeposit=async function(docId,userId,amount){
-  if(!confirm(`Approve deposit of $${amount}?`))return;
-  await safeOp(async()=>{
-    await runTransaction(db,async txn=>{
-      const depRef=doc(db,'deposits',docId);const userRef=doc(db,'users',userId);
-      const uSnap=await txn.get(userRef);const uData=uSnap.data();
-      txn.update(depRef,{status:'approved'});
-      txn.update(userRef,{balance:(uData.balance||0)+amount,totalDeposits:(uData.totalDeposits||0)+amount});
-      if(!uData.firstDepositDone&&uData.referredBy){
-        const commission=amount*0.08;
-        const refRef=doc(db,'users',uData.referredBy);const refSnap=await txn.get(refRef);
-        if(refSnap.exists()){const rd=refSnap.data();txn.update(refRef,{balance:(rd.balance||0)+commission,totalCommission:(rd.totalCommission||0)+commission});txn.set(doc(collection(db,'referralCommissions')),{userId:uData.referredBy,fromUserId:userId,fromUserName:uData.fullname||'',fromUserEmail:uData.email||'',amount:commission,depositAmount:amount,createdAt:serverTimestamp()});}
-        txn.update(userRef,{firstDepositDone:true});
-      }
-    });
-    showToast('Deposit approved!','success');loadAgentData();
-  });
-};
-window.agentRejectDeposit=async function(docId){
-  if(!confirm('Reject this deposit?'))return;
-  await safeOp(()=>updateDoc(doc(db,'deposits',docId),{status:'rejected'}));showToast('Deposit rejected.','warn');loadAgentData();
-};
-window.agentApproveWithdrawal=async function(docId,userId,amount){
-  if(!confirm(`Approve withdrawal of $${amount}?`))return;
-  await safeOp(async()=>{
-    await runTransaction(db,async txn=>{
-      const withRef=doc(db,'withdrawals',docId);const userRef=doc(db,'users',userId);const uSnap=await txn.get(userRef);
-      if((uSnap.data().balance||0)<amount)throw new Error('User balance too low.');
-      txn.update(withRef,{status:'approved'});txn.update(userRef,{balance:(uSnap.data().balance||0)-amount,totalWithdrawals:(uSnap.data().totalWithdrawals||0)+amount});
-    });
-    showToast('Withdrawal approved!','success');loadAgentData();
-  });
-};
-window.agentRejectWithdrawal=async function(docId){
-  if(!confirm('Reject this withdrawal?'))return;
-  await safeOp(()=>updateDoc(doc(db,'withdrawals',docId),{status:'rejected'}));showToast('Withdrawal rejected.','warn');loadAgentData();
-};
-window.viewKYC=async function(kycId){
-  const snap=await safeOp(()=>getDoc(doc(db,'kycRequests',kycId)));if(!snap)return;const k=snap.data();
-  document.getElementById('kyc-detail-content').innerHTML=`<p style="color:var(--text3);margin-bottom:6px">Email: ${k.userEmail}</p><p style="font-weight:600;margin-bottom:12px">${k.fullname} · DOB: ${k.dob}</p><p>ID Front</p><img src="data:image/jpeg;base64,${k.frontImage}" style="width:100%;border-radius:12px;margin-bottom:12px"><p>ID Back</p><img src="data:image/jpeg;base64,${k.backImage}" style="width:100%;border-radius:12px">`;
-  openModal('kyc-detail-modal');
-};
-window.agentApproveKYC=async function(kycId,userId){
-  if(!confirm('Approve KYC?'))return;
-  await safeOp(async()=>{await updateDoc(doc(db,'kycRequests',kycId),{status:'approved'});await updateDoc(doc(db,'users',userId),{kycStatus:'verified'});closeModal('kyc-detail-modal');showToast('KYC Approved!','success');loadAgentData();});
-};
-window.agentRejectKYC=async function(kycId,userId){
-  if(!confirm('Reject KYC?'))return;
-  await safeOp(async()=>{await updateDoc(doc(db,'kycRequests',kycId),{status:'rejected'});await updateDoc(doc(db,'users',userId),{kycStatus:'rejected'});closeModal('kyc-detail-modal');showToast('KYC Rejected.','warn');loadAgentData();});
-};
-
-window.switchAgentTab=function(tab,btn){
-  document.querySelectorAll('.agent-tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.agent-section').forEach(s=>s.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById(`agent-${tab}`).classList.add('active');
-  // When agent opens Support Chat tab, load threads immediately
-  if(tab==='support-chat'){
-    loadAgentChatThreads();
-  }
-};
-
-function setLoading(btn,on,label=''){
-  if(!btn)return;btn.disabled=on;btn.innerHTML=on?'<span class="spinner"></span>':label||btn.textContent;
-}
-
+async function loadAgentData(){ if(!userData||userData.role!=='agent')return; const [depSnap,withSnap,userSnap,kycSnap]=await Promise.all([ safeOp(()=>getDocs(query(collection(db,'deposits'),where('status','==','pending')))), safeOp(()=>getDocs(query(collection(db,'withdrawals'),where('status','==','pending')))), safeOp(()=>getDocs(collection(db,'users'))), safeOp(()=>getDocs(query(collection(db,'kycRequests'),where('status','==','pending')))) ]); document.getElementById('ag-pending-dep').textContent=depSnap?.size||0; document.getElementById('ag-pending-with').textContent=withSnap?.size||0; document.getElementById('ag-total-users').textContent=userSnap?.size||0; document.getElementById('ag-pending-kyc').textContent=kycSnap?.size||0; renderAgentDeposits(depSnap?.docs||[]); renderAgentWithdrawals(withSnap?.docs||[]); renderAgentKYC(kycSnap?.docs||[]); initAgentChatListener(); }
+function renderAgentDeposits(docs){ const el=document.getElementById('agent-deposits'); if(!docs.length){el.innerHTML='<div class="empty-state"><i class="fas fa-inbox"></i><p>No pending deposits.</p></div>';return;} el.innerHTML=docs.map(d=>{const dep=d.data();return`<div class="agent-card"><div class="ac-email">${dep.userEmail} · ${dep.method}</div><div class="ac-amount">$${(dep.amount||0).toFixed(2)}</div><div style="font-size:11px;color:var(--text3);margin-bottom:6px">Wallet: ${dep.userWallet||'—'}</div><div style="font-size:11px;color:var(--text3);margin-bottom:10px">TxID: ${dep.txnHash?.substring(0,20)}...</div>${dep.screenshot?`<img src="data:image/jpeg;base64,${dep.screenshot}" style="width:100%;border-radius:10px;margin-bottom:10px;max-height:120px;object-fit:cover">`:''}><div class="agent-actions"><button class="agent-btn approve" onclick="agentApproveDeposit('${d.id}','${dep.userId}',${dep.amount})">✅ Approve</button><button class="agent-btn reject" onclick="agentRejectDeposit('${d.id}')">❌ Reject</button></div></div>`;}).join(''); }
+function renderAgentWithdrawals(docs){ const el=document.getElementById('agent-withdrawals'); if(!docs.length){el.innerHTML='<div class="empty-state"><i class="fas fa-inbox"></i><p>No pending withdrawals.</p></div>';return;} el.innerHTML=docs.map(d=>{ const w=d.data(); const qrHtml=w.qrCode?`<img src="data:image/jpeg;base64,${w.qrCode}" class="agent-qr-img" title="Tap to expand" onclick="this.style.maxHeight=this.style.maxHeight==='none'?'120px':'none'">`:'<div style="font-size:11px;color:var(--text3);margin-bottom:8px;">No QR code uploaded</div>'; return`<div class="agent-card"><div class="ac-email">${w.userEmail} · ${w.method}</div><div class="ac-amount">$${(w.amount||0).toFixed(2)}</div><div style="font-size:11px;color:var(--text3);margin-bottom:8px">To: ${w.address?.substring(0,28)}...</div>${qrHtml}<div class="agent-actions"><button class="agent-btn approve" onclick="agentApproveWithdrawal('${d.id}','${w.userId}',${w.amount})">✅ Approve</button><button class="agent-btn reject" onclick="agentRejectWithdrawal('${d.id}')">❌ Reject</button></div></div>`; }).join(''); }
+function renderAgentKYC(docs){ const el=document.getElementById('agent-kyc'); if(!docs.length){el.innerHTML='<div class="empty-state"><i class="fas fa-id-card"></i><p>No pending KYC requests.</p></div>';return;} el.innerHTML=docs.map(d=>{const k=d.data();return`<div class="agent-card"><div class="ac-email">${k.userEmail}</div><div style="font-size:14px;font-weight:600;margin-bottom:10px">${k.fullname} · DOB: ${k.dob}</div><div class="agent-actions"><button class="agent-btn view" onclick="viewKYC('${d.id}')">👁 View</button><button class="agent-btn approve" onclick="agentApproveKYC('${d.id}','${k.userId}')">✅ Approve</button><button class="agent-btn reject" onclick="agentRejectKYC('${d.id}','${k.userId}')">❌ Reject</button></div></div>`;}).join(''); }
+window.agentApproveDeposit=async function(docId,userId,amount){ if(!confirm(`Approve deposit of $${amount}?`))return; await safeOp(async()=>{ await runTransaction(db,async txn=>{ const depRef=doc(db,'deposits',docId); const userRef=doc(db,'users',userId); const uSnap=await txn.get(userRef); const uData=uSnap.data(); txn.update(depRef,{status:'approved'}); txn.update(userRef,{balance:(uData.balance||0)+amount,totalDeposits:(uData.totalDeposits||0)+amount}); if(!uData.firstDepositDone&&uData.referredBy){ const commission=amount*0.08; const refRef=doc(db,'users',uData.referredBy); const refSnap=await txn.get(refRef); if(refSnap.exists()){const rd=refSnap.data();txn.update(refRef,{balance:(rd.balance||0)+commission,totalCommission:(rd.totalCommission||0)+commission}); txn.set(doc(collection(db,'referralCommissions')),{userId:uData.referredBy,fromUserId:userId,fromUserName:uData.fullname||'',fromUserEmail:uData.email||'',amount:commission,depositAmount:amount,createdAt:serverTimestamp()});} txn.update(userRef,{firstDepositDone:true}); } }); showToast('Deposit approved!','success'); loadAgentData(); }); };
+window.agentRejectDeposit=async function(docId){ if(!confirm('Reject this deposit?'))return; await safeOp(()=>updateDoc(doc(db,'deposits',docId),{status:'rejected'})); showToast('Deposit rejected.','warn'); loadAgentData(); };
+window.agentApproveWithdrawal=async function(docId,userId,amount){ if(!confirm(`Approve withdrawal of $${amount}?`))return; await safeOp(async()=>{ await runTransaction(db,async txn=>{ const withRef=doc(db,'withdrawals',docId); const userRef=doc(db,'users',userId); const uSnap=await txn.get(userRef); if((uSnap.data().balance||0)<amount)throw new Error('User balance too low.'); txn.update(withRef,{status:'approved'}); txn.update(userRef,{balance:(uSnap.data().balance||0)-amount,totalWithdrawals:(uSnap.data().totalWithdrawals||0)+amount}); }); showToast('Withdrawal approved!','success'); loadAgentData(); }); };
+window.agentRejectWithdrawal=async function(docId){ if(!confirm('Reject this withdrawal?'))return; await safeOp(()=>updateDoc(doc(db,'withdrawals',docId),{status:'rejected'})); showToast('Withdrawal rejected.','warn'); loadAgentData(); };
+window.viewKYC=async function(kycId){ const snap=await safeOp(()=>getDoc(doc(db,'kycRequests',kycId))); if(!snap)return; const k=snap.data(); document.getElementById('kyc-detail-content').innerHTML=`<p style="color:var(--text3);margin-bottom:6px">Email: ${k.userEmail}</p><p style="font-weight:600;margin-bottom:12px">${k.fullname} · DOB: ${k.dob}</p><p>ID Front</p><img src="data:image/jpeg;base64,${k.frontImage}" style="width:100%;border-radius:12px;margin-bottom:12px"><p>ID Back</p><img src="data:image/jpeg;base64,${k.backImage}" style="width:100%;border-radius:12px">`; openModal('kyc-detail-modal'); };
+window.agentApproveKYC=async function(kycId,userId){ if(!confirm('Approve KYC?'))return; await safeOp(async()=>{ await updateDoc(doc(db,'kycRequests',kycId),{status:'approved'}); await updateDoc(doc(db,'users',userId),{kycStatus:'verified'}); closeModal('kyc-detail-modal'); showToast('KYC Approved!','success'); loadAgentData(); }); };
+window.agentRejectKYC=async function(kycId,userId){ if(!confirm('Reject KYC?'))return; await safeOp(async()=>{ await updateDoc(doc(db,'kycRequests',kycId),{status:'rejected'}); await updateDoc(doc(db,'users',userId),{kycStatus:'rejected'}); closeModal('kyc-detail-modal'); showToast('KYC Rejected.','warn'); loadAgentData(); }); };
+window.switchAgentTab=function(tab,btn){ document.querySelectorAll('.agent-tab').forEach(t=>t.classList.remove('active')); document.querySelectorAll('.agent-section').forEach(s=>s.classList.remove('active')); btn.classList.add('active'); document.getElementById(`agent-${tab}`).classList.add('active'); if(tab==='support-chat') loadAgentChatThreads(); };
+function setLoading(btn,on,label=''){ if(!btn)return; btn.disabled=on; btn.innerHTML=on?'<span class="spinner"></span>':label||btn.textContent; }
 window.addEventListener('offline',()=>document.getElementById('offline-banner').classList.add('show'));
 window.addEventListener('online',()=>{document.getElementById('offline-banner').classList.remove('show');showToast('Back online.','success');});
-
-if('serviceWorker' in navigator){
-  const sw=`self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('fetch',e=>e.respondWith(fetch(e.request).catch(()=>new Response('Offline'))));`;
-  const blob=new Blob([sw],{type:'application/javascript'});
-  navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
-}
+if('serviceWorker' in navigator){ const sw=`self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('fetch',e=>e.respondWith(fetch(e.request).catch(()=>new Response('Offline'))));`; const blob=new Blob([sw],{type:'application/javascript'}); navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{}); }
 </script>
 </body>
 </html>
